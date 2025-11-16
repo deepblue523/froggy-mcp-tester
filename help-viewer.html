@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Help - MCP Server Tester</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #f5f5f5;
+      color: #333;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .header {
+      background: #2c3e50;
+      color: white;
+      padding: 1rem 1.5rem;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .header h1 {
+      font-size: 1.3rem;
+      font-weight: 600;
+    }
+
+    .close-btn {
+      background: rgba(255,255,255,0.2);
+      border: none;
+      color: white;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: background 0.2s;
+    }
+
+    .close-btn:hover {
+      background: rgba(255,255,255,0.3);
+    }
+
+    .content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 2rem;
+      background: white;
+      margin: 1rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .loading {
+      text-align: center;
+      padding: 3rem;
+      color: #666;
+    }
+
+    .error {
+      padding: 2rem;
+      background: #fadbd8;
+      border: 1px solid #e74c3c;
+      border-radius: 4px;
+      color: #c0392b;
+    }
+
+    /* Markdown styles */
+    .markdown-content {
+      line-height: 1.6;
+    }
+
+    .markdown-content h1 {
+      font-size: 2rem;
+      margin-top: 2rem;
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 2px solid #e0e0e0;
+    }
+
+    .markdown-content h2 {
+      font-size: 1.5rem;
+      margin-top: 1.5rem;
+      margin-bottom: 0.75rem;
+      padding-bottom: 0.25rem;
+      border-bottom: 1px solid #e0e0e0;
+    }
+
+    .markdown-content h3 {
+      font-size: 1.25rem;
+      margin-top: 1.25rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .markdown-content h4 {
+      font-size: 1.1rem;
+      margin-top: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .markdown-content p {
+      margin-bottom: 1rem;
+    }
+
+    .markdown-content ul,
+    .markdown-content ol {
+      margin-bottom: 1rem;
+      margin-left: 2rem;
+    }
+
+    .markdown-content li {
+      margin-bottom: 0.5rem;
+    }
+
+    .markdown-content code {
+      background: #f4f4f4;
+      padding: 0.2rem 0.4rem;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.9em;
+      color: #e83e8c;
+    }
+
+    .markdown-content pre {
+      background: #f4f4f4;
+      padding: 1rem;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin-bottom: 1rem;
+      border-left: 4px solid #3498db;
+    }
+
+    .markdown-content pre code {
+      background: none;
+      padding: 0;
+      color: #333;
+    }
+
+    .markdown-content blockquote {
+      border-left: 4px solid #3498db;
+      padding-left: 1rem;
+      margin-left: 0;
+      color: #666;
+      font-style: italic;
+      margin-bottom: 1rem;
+    }
+
+    .markdown-content table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 1rem;
+    }
+
+    .markdown-content table th,
+    .markdown-content table td {
+      padding: 0.5rem;
+      border: 1px solid #ddd;
+      text-align: left;
+    }
+
+    .markdown-content table th {
+      background: #f8f9fa;
+      font-weight: 600;
+    }
+
+    .markdown-content hr {
+      border: none;
+      border-top: 1px solid #e0e0e0;
+      margin: 2rem 0;
+    }
+
+    .markdown-content strong {
+      font-weight: 600;
+    }
+
+    .markdown-content em {
+      font-style: italic;
+    }
+
+    .markdown-content a {
+      color: #3498db;
+      text-decoration: none;
+    }
+
+    .markdown-content a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Help - MD Viewer</h1>
+    <button class="close-btn" id="close-btn">Close</button>
+  </div>
+  <div class="content" id="content">
+    <div class="loading">Loading help content...</div>
+  </div>
+
+  <script>
+    // Simple markdown to HTML converter
+    function markdownToHtml(markdown) {
+      let html = markdown;
+
+      // Code blocks first (before inline code processing)
+      html = html.replace(/```(\w+)?\n?([\s\S]*?)```/gim, (match, lang, code) => {
+        return '<pre><code>' + code.trim() + '</code></pre>';
+      });
+
+      // Headers
+      html = html.replace(/^#### (.*$)/gim, '<h4>$1</h4>');
+      html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+      html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+      html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+
+      // Horizontal rule
+      html = html.replace(/^---$/gim, '<hr>');
+
+      // Process lists - convert consecutive list items to proper list structures
+      const lines = html.split('\n');
+      const processedLines = [];
+      let inList = false;
+      let listType = null;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const ulMatch = line.match(/^[\*\-] (.+)$/);
+        const olMatch = line.match(/^\d+\. (.+)$/);
+
+        if (ulMatch) {
+          if (!inList || listType !== 'ul') {
+            if (inList && listType !== 'ul') {
+              processedLines.push('</' + listType + '>');
+            } else if (inList) {
+              processedLines.push('</ul>');
+            }
+            processedLines.push('<ul>');
+            inList = true;
+            listType = 'ul';
+          }
+          processedLines.push('<li>' + ulMatch[1] + '</li>');
+        } else if (olMatch) {
+          if (!inList || listType !== 'ol') {
+            if (inList && listType !== 'ol') {
+              processedLines.push('</' + listType + '>');
+            } else if (inList) {
+              processedLines.push('</ol>');
+            }
+            processedLines.push('<ol>');
+            inList = true;
+            listType = 'ol';
+          }
+          processedLines.push('<li>' + olMatch[1] + '</li>');
+        } else {
+          if (inList) {
+            processedLines.push('</' + listType + '>');
+            inList = false;
+            listType = null;
+          }
+          processedLines.push(line);
+        }
+      }
+
+      if (inList) {
+        processedLines.push('</' + listType + '>');
+      }
+
+      html = processedLines.join('\n');
+
+      // Bold (after inline code)
+      html = html.replace(/\*\*(.+?)\*\*/gim, '<strong>$1</strong>');
+
+      // Italic (but not if already processed as bold)
+      html = html.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/gim, '<em>$1</em>');
+
+      // Inline code (after code blocks)
+      html = html.replace(/`([^`]+)`/gim, '<code>$1</code>');
+
+      // Links
+      html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/gim, '<a href="$2">$1</a>');
+
+      // Paragraphs (lines that don't start with HTML tags and aren't empty)
+      html = html.split('\n\n').map(para => {
+        const trimmed = para.trim();
+        if (trimmed && !trimmed.match(/^<[houl]|^<li|^<pre|^<hr|^<p/)) {
+          return '<p>' + trimmed + '</p>';
+        }
+        return trimmed;
+      }).filter(p => p).join('\n\n');
+
+      // Clean up multiple newlines
+      html = html.replace(/\n{3,}/g, '\n\n');
+
+      return html;
+    }
+
+    // Load and display USAGE.md
+    async function loadHelp() {
+      const contentDiv = document.getElementById('content');
+      
+      try {
+        const response = await window.electronAPI.readUsageMd();
+        
+        if (response.success) {
+          const html = markdownToHtml(response.content);
+          contentDiv.innerHTML = '<div class="markdown-content">' + html + '</div>';
+        } else {
+          contentDiv.innerHTML = `
+            <div class="error">
+              <h3>Error loading help</h3>
+              <p>${response.error}</p>
+            </div>
+          `;
+        }
+      } catch (error) {
+        contentDiv.innerHTML = `
+          <div class="error">
+            <h3>Error</h3>
+            <p>${error.message}</p>
+          </div>
+        `;
+      }
+    }
+
+    // Close button handler
+    document.getElementById('close-btn').addEventListener('click', () => {
+      window.close();
+    });
+
+    // Load help on page load
+    document.addEventListener('DOMContentLoaded', loadHelp);
+  </script>
+</body>
+</html>
+

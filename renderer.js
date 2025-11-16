@@ -1,11 +1,40 @@
 let servers = [];
 let currentServer = null;
 let currentTools = [];
+let currentEndpoints = [];
+
+// Standard MCP endpoints
+const STANDARD_ENDPOINTS = [
+  {
+    name: 'tools/list',
+    description: 'List all available tools from the server',
+    samplePayload: {}
+  },
+  {
+    name: 'initialize',
+    description: 'Initialize the MCP connection',
+    samplePayload: {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: {
+        name: 'froggy-mcp-tester',
+        version: '1.0.0'
+      }
+    }
+  },
+  {
+    name: 'ping',
+    description: 'Ping the server to check connectivity',
+    samplePayload: {}
+  }
+];
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
   await loadServers();
   setupEventListeners();
+  setupResizeHandle();
+  loadPanelWidth();
 });
 
 function setupEventListeners() {
@@ -29,6 +58,32 @@ function setupEventListeners() {
   // Transport type change handler
   const transportSelect = document.getElementById('server-transport');
   transportSelect.addEventListener('change', updateTransportFields);
+
+  // Tools refresh button
+  const refreshBtn = document.getElementById('tools-refresh-btn');
+  refreshBtn.addEventListener('click', () => {
+    if (currentServer) {
+      loadTools();
+    }
+  });
+
+  // Help button
+  const helpBtn = document.getElementById('help-btn');
+  helpBtn.addEventListener('click', async () => {
+    await window.electronAPI.openHelp();
+  });
+
+  // Request modal controls
+  document.getElementById('request-modal-close').addEventListener('click', hideRequestModal);
+  document.getElementById('request-modal-cancel').addEventListener('click', hideRequestModal);
+  document.getElementById('request-send').addEventListener('click', sendRequest);
+  
+  // Close modal on outside click
+  document.getElementById('request-modal').addEventListener('click', (e) => {
+    if (e.target.id === 'request-modal') {
+      hideRequestModal();
+    }
+  });
 }
 
 function updateTransportFields() {
@@ -104,15 +159,27 @@ function renderServerList() {
 function selectServer(index) {
   currentServer = { index, ...servers[index] };
   renderServerList();
-  loadTools();
+  showStandardEndpoints();
+}
+
+function showStandardEndpoints() {
+  const toolsContent = document.getElementById('tools-content');
+  const panelTitle = document.getElementById('tools-panel-title');
+  
+  panelTitle.textContent = `Endpoints - ${currentServer.name}`;
+  
+  // Just show standard endpoints without loading tools
+  currentEndpoints = [...STANDARD_ENDPOINTS];
+  currentTools = [];
+  renderEndpoints();
 }
 
 async function loadTools() {
   const toolsContent = document.getElementById('tools-content');
   const panelTitle = document.getElementById('tools-panel-title');
   
-  panelTitle.textContent = `Tools - ${currentServer.name}`;
-  toolsContent.innerHTML = '<div class="loading">Loading tools...</div>';
+  panelTitle.textContent = `Endpoints - ${currentServer.name}`;
+  toolsContent.innerHTML = '<div class="loading">Loading endpoints...</div>';
 
   try {
     // Pass full server config
@@ -122,68 +189,118 @@ async function loadTools() {
       transport: currentServer.transport || 'stdio',
       apiKey: currentServer.apiKey || null
     };
+    
+    // Try to load tools to discover available endpoints
     const response = await window.electronAPI.listTools(serverConfig);
     
     if (response.success) {
-      currentTools = response.tools;
-      renderTools();
+      currentTools = response.tools || [];
+      
+      // Build endpoints list: standard endpoints + tool endpoints
+      currentEndpoints = [...STANDARD_ENDPOINTS];
+      
+      // Add tool-specific endpoints
+      currentTools.forEach(tool => {
+        currentEndpoints.push({
+          name: `tools/call`,
+          description: `Call tool: ${tool.name}`,
+          toolName: tool.name,
+          samplePayload: generateToolPayload(tool)
+        });
+      });
+      
+      renderEndpoints();
     } else {
-      toolsContent.innerHTML = `
-        <div class="tool-result error">
-          <h4>Error loading tools</h4>
-          <pre>${escapeHtml(response.error)}</pre>
-        </div>
+      // Even if tools fail, show standard endpoints
+      currentEndpoints = [...STANDARD_ENDPOINTS];
+      renderEndpoints();
+      
+      // Show error but still allow testing
+      const errorPanel = document.createElement('div');
+      errorPanel.className = 'tool-result error';
+      errorPanel.innerHTML = `
+        <h4>Warning: Could not load tools</h4>
+        <pre>${escapeHtml(response.error)}</pre>
+        <p>Standard endpoints are still available for testing.</p>
       `;
+      toolsContent.prepend(errorPanel);
     }
   } catch (error) {
-    toolsContent.innerHTML = `
-      <div class="tool-result error">
-        <h4>Error</h4>
-        <pre>${escapeHtml(error.message)}</pre>
-      </div>
+    // Even on error, show standard endpoints
+    currentEndpoints = [...STANDARD_ENDPOINTS];
+    renderEndpoints();
+    
+    const errorPanel = document.createElement('div');
+    errorPanel.className = 'tool-result error';
+    errorPanel.innerHTML = `
+      <h4>Error loading tools</h4>
+      <pre>${escapeHtml(error.message)}</pre>
+      <p>Standard endpoints are still available for testing.</p>
     `;
+    toolsContent.prepend(errorPanel);
   }
 }
 
-function renderTools() {
+function generateToolPayload(tool) {
+  // For tools/call, the payload should have name and arguments
+  const payload = {
+    name: tool.name,
+    arguments: {}
+  };
+  
+  if (tool.inputSchema && tool.inputSchema.properties) {
+    const properties = tool.inputSchema.properties;
+    
+    Object.keys(properties).forEach(paramName => {
+      const param = properties[paramName];
+      // Generate sample value based on type
+      if (param.type === 'string') {
+        payload.arguments[paramName] = '';
+      } else if (param.type === 'number') {
+        payload.arguments[paramName] = 0;
+      } else if (param.type === 'boolean') {
+        payload.arguments[paramName] = false;
+      } else if (param.type === 'array') {
+        payload.arguments[paramName] = [];
+      } else if (param.type === 'object') {
+        payload.arguments[paramName] = {};
+      } else {
+        payload.arguments[paramName] = null;
+      }
+    });
+  }
+  
+  return payload;
+}
+
+function renderEndpoints() {
   const toolsContent = document.getElementById('tools-content');
   
-  if (currentTools.length === 0) {
-    toolsContent.innerHTML = '<div class="empty-state"><p>No tools available on this server.</p></div>';
+  if (currentEndpoints.length === 0) {
+    toolsContent.innerHTML = '<div class="empty-state"><p>No endpoints available.</p></div>';
     return;
   }
 
-  const toolList = document.createElement('div');
-  toolList.className = 'tool-list';
+  const endpointList = document.createElement('div');
+  endpointList.className = 'endpoint-list';
 
-  currentTools.forEach(tool => {
-    const toolItem = document.createElement('div');
-    toolItem.className = 'tool-item';
-    toolItem.innerHTML = `
-      <div class="tool-header">
-        <div class="tool-name">${escapeHtml(tool.name)}</div>
+  currentEndpoints.forEach((endpoint, index) => {
+    const endpointItem = document.createElement('div');
+    endpointItem.className = 'endpoint-item';
+    const endpointId = `endpoint-${index}`;
+    const displayName = endpoint.toolName ? `${endpoint.name} (${endpoint.toolName})` : endpoint.name;
+    endpointItem.innerHTML = `
+      <div class="endpoint-header">
+        <div class="endpoint-name">${escapeHtml(displayName)}</div>
+        <button class="btn btn-primary btn-sm" onclick="testEndpoint(${index})">Test</button>
       </div>
-      <div class="tool-description">${escapeHtml(tool.description || 'No description available')}</div>
-      ${renderToolParameters(tool)}
-      ${renderToolExecute(tool)}
-      <div class="tool-result-container" id="result-${tool.name}"></div>
+      <div class="endpoint-description">${escapeHtml(endpoint.description || 'No description available')}</div>
     `;
-    toolList.appendChild(toolItem);
+    endpointList.appendChild(endpointItem);
   });
 
   toolsContent.innerHTML = '';
-  toolsContent.appendChild(toolList);
-
-  // Attach event listeners for execute buttons
-  currentTools.forEach(tool => {
-    const form = document.getElementById(`form-${tool.name}`);
-    if (form) {
-      form.addEventListener('submit', (e) => {
-        e.preventDefault();
-        executeTool(tool);
-      });
-    }
-  });
+  toolsContent.appendChild(endpointList);
 }
 
 function renderToolParameters(tool) {
@@ -337,6 +454,7 @@ async function executeTool(tool) {
           <h4>Result:</h4>
           <pre>${escapeHtml(JSON.stringify(response.result, null, 2))}</pre>
         </div>
+        ${response.debug ? `<div class="tool-result"><h4>Request</h4>${renderRequestDebug(response.debug)}</div>` : ''}
       `;
     } else {
       resultContainer.innerHTML = `
@@ -344,6 +462,7 @@ async function executeTool(tool) {
           <h4>Error</h4>
           <pre>${escapeHtml(response.error)}</pre>
         </div>
+        ${response.debug ? `<div class="tool-result error">${renderRequestDebug(response.debug)}</div>` : ''}
       `;
     }
   } catch (error) {
@@ -353,6 +472,39 @@ async function executeTool(tool) {
         <pre>${escapeHtml(error.message)}</pre>
       </div>
     `;
+  }
+}
+
+function renderRequestDebug(debug) {
+  try {
+    // Build a human-friendly block containing URL and payloads
+    const lines = [];
+    if (debug.transport) {
+      lines.push(`Transport: ${debug.transport}`);
+    }
+    if (debug.url) {
+      lines.push(`URL: ${debug.url}`);
+    }
+    if (debug.action) {
+      lines.push(`Action: ${debug.action}`);
+    }
+    if (typeof debug.statusCode !== 'undefined') {
+      lines.push(`Status: ${debug.statusCode}`);
+    }
+    const header = lines.join('\n');
+
+    const request = debug.requestBody ? JSON.stringify(debug.requestBody, null, 2) : null;
+    const response = debug.responseBody
+      ? JSON.stringify(debug.responseBody, null, 2)
+      : (debug.responseBodyPreview ? debug.responseBodyPreview : null);
+
+    return `
+      <pre>${escapeHtml(header)}</pre>
+      ${request ? `<h5>Payload Sent</h5><pre>${escapeHtml(request)}</pre>` : ''}
+      ${response ? `<h5>Payload Received</h5><pre>${escapeHtml(response)}</pre>` : ''}
+    `;
+  } catch {
+    return '<pre>Debug info unavailable</pre>';
   }
 }
 
@@ -450,10 +602,10 @@ async function deleteServer(index) {
     
     if (currentServer && currentServer.index === index) {
       currentServer = null;
-      document.getElementById('tools-panel-title').textContent = 'Select a server to view tools';
+      document.getElementById('tools-panel-title').textContent = 'Select a server to view endpoints';
       document.getElementById('tools-content').innerHTML = `
         <div class="empty-state">
-          <p>Select an MCP server from the list to view and test its tools.</p>
+          <p>Select an MCP server from the list to view and test its endpoints.</p>
         </div>
       `;
     }
@@ -469,4 +621,270 @@ function escapeHtml(text) {
 // Make functions available globally for onclick handlers
 window.editServer = editServer;
 window.deleteServer = deleteServer;
+window.testEndpoint = testEndpoint;
+
+function getPayloadKey(serverName, endpointName, toolName = null) {
+  const key = toolName ? `${serverName}_${endpointName}_${toolName}` : `${serverName}_${endpointName}`;
+  return `testPayload_${key}`;
+}
+
+function savePayload(serverName, endpointName, payload, toolName = null) {
+  const key = getPayloadKey(serverName, endpointName, toolName);
+  try {
+    localStorage.setItem(key, JSON.stringify(payload));
+  } catch (e) {
+    console.error('Failed to save payload:', e);
+  }
+}
+
+function loadPayload(serverName, endpointName, defaultPayload, toolName = null) {
+  const key = getPayloadKey(serverName, endpointName, toolName);
+  try {
+    const saved = localStorage.getItem(key);
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch (e) {
+    console.error('Failed to load payload:', e);
+  }
+  return defaultPayload || {};
+}
+
+function testEndpoint(endpointIndex) {
+  if (!currentServer || !currentEndpoints[endpointIndex]) {
+    return;
+  }
+  
+  const endpoint = currentEndpoints[endpointIndex];
+  const defaultPayload = endpoint.samplePayload || {};
+  const savedPayload = loadPayload(currentServer.name, endpoint.name, defaultPayload, endpoint.toolName);
+  
+  showRequestModal(endpoint, savedPayload);
+}
+
+function getFullEndpointUrl(serverConfig, endpointName) {
+  if (serverConfig.transport === 'rest') {
+    // For REST, construct the full URL
+    // MCP REST typically uses the base URL, but we'll show it as baseUrl/endpoint for clarity
+    const baseUrl = serverConfig.address.trim();
+    // Remove trailing slash if present
+    const cleanBase = baseUrl.replace(/\/$/, '');
+    // Construct full URL - for MCP REST, the method goes in the JSON-RPC body,
+    // but we'll display it as if it were a path for clarity
+    return `${cleanBase}/${endpointName}`;
+  } else {
+    // For stdio, show the command and method
+    return `stdio://${serverConfig.address} [${endpointName}]`;
+  }
+}
+
+function showRequestModal(endpoint, payload) {
+  const modal = document.getElementById('request-modal');
+  const endpointNameEl = document.getElementById('request-endpoint-name');
+  const endpointUrlEl = document.getElementById('request-endpoint-url');
+  const endpointDescEl = document.getElementById('request-endpoint-desc');
+  const payloadTextarea = document.getElementById('request-payload');
+  const responseContainer = document.getElementById('request-response');
+  
+  // Clear previous response
+  responseContainer.innerHTML = '';
+  
+  const displayName = endpoint.toolName ? `${endpoint.name} (${endpoint.toolName})` : endpoint.name;
+  endpointNameEl.textContent = displayName;
+  endpointDescEl.textContent = getFullEndpointUrl(currentServer, endpoint.name);
+  endpointDescEl.textContent = endpoint.description || 'No description';
+  
+  // Format payload as JSON
+  try {
+    payloadTextarea.value = JSON.stringify(payload, null, 2);
+  } catch (e) {
+    payloadTextarea.value = '{}';
+  }
+  
+  modal.dataset.endpointIndex = currentEndpoints.indexOf(endpoint);
+  modal.classList.add('show');
+  payloadTextarea.focus();
+}
+
+function hideRequestModal() {
+  const modal = document.getElementById('request-modal');
+  modal.classList.remove('show');
+}
+
+async function sendRequest() {
+  const modal = document.getElementById('request-modal');
+  const endpointIndex = parseInt(modal.dataset.endpointIndex);
+  const payloadTextarea = document.getElementById('request-payload');
+  const responseContainer = document.getElementById('request-response');
+  
+  if (endpointIndex === undefined || !currentEndpoints[endpointIndex]) {
+    return;
+  }
+  
+  const endpoint = currentEndpoints[endpointIndex];
+  
+  // Parse payload
+  let params = {};
+  try {
+    const payloadText = payloadTextarea.value.trim();
+    if (payloadText) {
+      params = JSON.parse(payloadText);
+    }
+  } catch (e) {
+    responseContainer.innerHTML = `
+      <div class="tool-result error">
+        <h4>Invalid JSON</h4>
+        <pre>${escapeHtml(e.message)}</pre>
+      </div>
+    `;
+    return;
+  }
+  
+  // Save payload for next time
+  savePayload(currentServer.name, endpoint.name, params, endpoint.toolName);
+  
+  // Show loading
+  responseContainer.innerHTML = '<div class="loading">Sending request...</div>';
+  
+  try {
+    const serverConfig = {
+      name: currentServer.name,
+      address: currentServer.address,
+      transport: currentServer.transport || 'stdio',
+      apiKey: currentServer.apiKey || null
+    };
+    
+    // Handle tools/call specially if it has a toolName
+    let method = endpoint.name;
+    let methodParams = params;
+    
+    if (endpoint.name === 'tools/call' && endpoint.toolName) {
+      // For tool calls, ensure the tool name is in the params
+      if (!params.name) {
+        methodParams = { 
+          name: endpoint.toolName,
+          arguments: params.arguments || params
+        };
+      } else {
+        methodParams = params;
+      }
+    }
+    
+    const response = await window.electronAPI.callMethod(serverConfig, method, methodParams);
+    
+    if (response.success) {
+      // If testing tools/list endpoint and it succeeds, load tools to discover endpoints
+      if (endpoint.name === 'tools/list') {
+        // Extract tools from the response
+        const toolsResult = response.result;
+        if (toolsResult && toolsResult.tools) {
+          currentTools = toolsResult.tools;
+          
+          // Build endpoints list: standard endpoints + tool endpoints
+          currentEndpoints = [...STANDARD_ENDPOINTS];
+          
+          // Add tool-specific endpoints
+          currentTools.forEach(tool => {
+            currentEndpoints.push({
+              name: `tools/call`,
+              description: `Call tool: ${tool.name}`,
+              toolName: tool.name,
+              samplePayload: generateToolPayload(tool)
+            });
+          });
+          
+          // Re-render endpoints list to include discovered tools
+          renderEndpoints();
+        }
+      }
+      
+      let html = `
+        <div class="tool-result success">
+          <h4>Response:</h4>
+          <pre>${escapeHtml(JSON.stringify(response.result, null, 2))}</pre>
+        </div>
+      `;
+      if (response.debug) {
+        html += `<div class="tool-result"><h4>Request Details</h4>${renderRequestDebug(response.debug)}</div>`;
+      }
+      responseContainer.innerHTML = html;
+    } else {
+      let html = `
+        <div class="tool-result error">
+          <h4>Error</h4>
+          <pre>${escapeHtml(response.error)}</pre>
+        </div>
+      `;
+      if (response.debug) {
+        html += `<div class="tool-result error">${renderRequestDebug(response.debug)}</div>`;
+      }
+      responseContainer.innerHTML = html;
+    }
+  } catch (error) {
+    responseContainer.innerHTML = `
+      <div class="tool-result error">
+        <h4>Error</h4>
+        <pre>${escapeHtml(error.message)}</pre>
+      </div>
+    `;
+  }
+}
+
+// Panel resize functionality
+function setupResizeHandle() {
+  const resizeHandle = document.getElementById('resize-handle');
+  const serverPanel = document.getElementById('server-panel');
+  let isResizing = false;
+  let startX = 0;
+  let startWidth = 0;
+
+  resizeHandle.addEventListener('mousedown', (e) => {
+    isResizing = true;
+    startX = e.clientX;
+    startWidth = serverPanel.offsetWidth;
+    resizeHandle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isResizing) return;
+    
+    const diff = e.clientX - startX;
+    const newWidth = startWidth + diff;
+    const minWidth = 250;
+    const maxWidth = 800;
+    
+    if (newWidth >= minWidth && newWidth <= maxWidth) {
+      serverPanel.style.width = `${newWidth}px`;
+    }
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (isResizing) {
+      isResizing = false;
+      resizeHandle.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      savePanelWidth();
+    }
+  });
+}
+
+function loadPanelWidth() {
+  const savedWidth = localStorage.getItem('serverPanelWidth');
+  if (savedWidth) {
+    const width = parseInt(savedWidth, 10);
+    if (width >= 250 && width <= 800) {
+      document.getElementById('server-panel').style.width = `${width}px`;
+    }
+  }
+}
+
+function savePanelWidth() {
+  const serverPanel = document.getElementById('server-panel');
+  const width = serverPanel.offsetWidth;
+  localStorage.setItem('serverPanelWidth', width.toString());
+}
 

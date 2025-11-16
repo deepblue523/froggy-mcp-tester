@@ -58,6 +58,7 @@ async function createWindow() {
     height: bounds.height,
     x: bounds.x,
     y: bounds.y,
+    autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -122,9 +123,9 @@ ipcMain.handle('mcp-list-tools', async (event, serverConfig) => {
     await client.connect();
     const tools = await client.listTools();
     await client.disconnect();
-    return { success: true, tools };
+    return { success: true, tools, debug: client.getLastDebug?.() };
   } catch (error) {
-    return { success: false, error: error.message };
+    return { success: false, error: error.message, debug: client.getLastDebug?.() };
   }
 });
 
@@ -135,9 +136,60 @@ ipcMain.handle('mcp-call-tool', async (event, serverConfig, toolName, args) => {
     await client.connect();
     const result = await client.callTool(toolName, args);
     await client.disconnect();
-    return { success: true, result };
+    return { success: true, result, debug: client.getLastDebug?.() };
+  } catch (error) {
+    return { success: false, error: error.message, debug: client.getLastDebug?.() };
+  }
+});
+
+ipcMain.handle('mcp-call-method', async (event, serverConfig, method, params) => {
+  const { MCPClient } = require('./mcp-client.js');
+  const client = new MCPClient(serverConfig);
+  try {
+    await client.connect();
+    const result = await client.callMethod(method, params);
+    await client.disconnect();
+    return { success: true, result, debug: client.getLastDebug?.() };
+  } catch (error) {
+    return { success: false, error: error.message, debug: client.getLastDebug?.() };
+  }
+});
+
+// IPC Handler for reading USAGE.md
+ipcMain.handle('read-usage-md', async () => {
+  try {
+    const usagePath = path.join(__dirname, 'USAGE.md');
+    const data = await fs.readFile(usagePath, 'utf-8');
+    return { success: true, content: data };
   } catch (error) {
     return { success: false, error: error.message };
   }
+});
+
+// IPC Handler for opening help window
+let helpWindow = null;
+ipcMain.handle('open-help', async () => {
+  if (helpWindow) {
+    helpWindow.focus();
+    return;
+  }
+
+  helpWindow = new BrowserWindow({
+    width: 900,
+    height: 700,
+    parent: mainWindow,
+    modal: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js')
+    }
+  });
+
+  helpWindow.loadFile('help-viewer.html');
+
+  helpWindow.on('closed', () => {
+    helpWindow = null;
+  });
 });
 

@@ -11,6 +11,7 @@ class MCPClient {
     this.restApiKey = null;
     this.Client = null;
     this.StdioClientTransport = null;
+    this.lastDebug = null;
   }
 
   async connect() {
@@ -73,10 +74,20 @@ class MCPClient {
 
     return new Promise((resolve, reject) => {
       const postData = JSON.stringify(requestData);
+      
+      // Construct the full path - include the method as part of the path
+      // Remove trailing slash from base pathname, then append method
+      let basePath = url.pathname || '/';
+      if (basePath !== '/' && basePath.endsWith('/')) {
+        basePath = basePath.slice(0, -1);
+      }
+      // Avoid double slash when basePath is '/'
+      const fullPath = basePath === '/' ? `/${method}` : `${basePath}/${method}`;
+      
       const options = {
         hostname: url.hostname,
         port: url.port || (isHttps ? 443 : 80),
-        path: url.pathname || '/',
+        path: fullPath,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -99,6 +110,16 @@ class MCPClient {
           });
           res.on('end', () => {
             const contentType = res.headers['content-type'] || '';
+            // Save debug info for non-2xx as well
+            const fullUrl = `${url.protocol}//${url.hostname}${url.port && url.port !== (isHttps ? '443' : '80') ? `:${url.port}` : ''}${options.path}`;
+            this.lastDebug = {
+              transport: 'rest',
+              url: fullUrl,
+              requestBody: requestData,
+              statusCode: res.statusCode,
+              responseHeaders: res.headers,
+              responseBodyPreview: data.substring(0, 1000)
+            };
             if (contentType.includes('text/html') || data.trim().startsWith('<!DOCTYPE') || data.trim().startsWith('<html')) {
               // Extract a meaningful error from HTML if possible
               const statusText = res.statusMessage || 'Unknown error';
@@ -117,6 +138,15 @@ class MCPClient {
             data += chunk.toString();
           });
           res.on('end', () => {
+            const fullUrl = `${url.protocol}//${url.hostname}${url.port && url.port !== (isHttps ? '443' : '80') ? `:${url.port}` : ''}${options.path}`;
+            this.lastDebug = {
+              transport: 'rest',
+              url: fullUrl,
+              requestBody: requestData,
+              statusCode: res.statusCode,
+              responseHeaders: res.headers,
+              responseBodyPreview: data.substring(0, 1000)
+            };
             reject(new Error(`Unexpected content type: ${contentType}. Expected JSON but received: ${data.substring(0, 200)}...`));
           });
           return;
@@ -130,6 +160,15 @@ class MCPClient {
           // Check if response looks like HTML
           const trimmedData = data.trim();
           if (trimmedData.startsWith('<!DOCTYPE') || trimmedData.startsWith('<html') || trimmedData.startsWith('<HTML')) {
+            const fullUrl = `${url.protocol}//${url.hostname}${url.port && url.port !== (isHttps ? '443' : '80') ? `:${url.port}` : ''}${options.path}`;
+            this.lastDebug = {
+              transport: 'rest',
+              url: fullUrl,
+              requestBody: requestData,
+              statusCode: res.statusCode,
+              responseHeaders: res.headers,
+              responseBodyPreview: trimmedData.substring(0, 1000)
+            };
             reject(new Error(`Server returned HTML instead of JSON. This usually means the endpoint doesn't exist or the server returned an error page. Response preview: ${trimmedData.substring(0, 500)}...`));
             return;
           }
@@ -137,19 +176,53 @@ class MCPClient {
           try {
             const response = JSON.parse(data);
             if (response.error) {
+              const fullUrl = `${url.protocol}//${url.hostname}${url.port && url.port !== (isHttps ? '443' : '80') ? `:${url.port}` : ''}${options.path}`;
+              this.lastDebug = {
+                transport: 'rest',
+                url: fullUrl,
+                requestBody: requestData,
+                statusCode: res.statusCode,
+                responseHeaders: res.headers,
+                responseBodyPreview: data.substring(0, 1000)
+              };
               reject(new Error(response.error.message || 'REST request failed'));
             } else {
+              const fullUrl = `${url.protocol}//${url.hostname}${url.port && url.port !== (isHttps ? '443' : '80') ? `:${url.port}` : ''}${options.path}`;
+              this.lastDebug = {
+                transport: 'rest',
+                url: fullUrl,
+                requestBody: requestData,
+                statusCode: res.statusCode,
+                responseHeaders: res.headers,
+                responseBody: response
+              };
               resolve(response.result);
             }
           } catch (e) {
             // Provide more context about the parsing error
             const preview = data.length > 200 ? data.substring(0, 200) + '...' : data;
+            const fullUrl = `${url.protocol}//${url.hostname}${url.port && url.port !== (isHttps ? '443' : '80') ? `:${url.port}` : ''}${options.path}`;
+            this.lastDebug = {
+              transport: 'rest',
+              url: fullUrl,
+              requestBody: requestData,
+              statusCode: res.statusCode,
+              responseHeaders: res.headers,
+              responseBodyPreview: preview
+            };
             reject(new Error(`Failed to parse JSON response: ${e.message}. Response preview: ${preview}`));
           }
         });
       });
 
       req.on('error', (e) => {
+        const fullUrl = `${url.protocol}//${url.hostname}${url.port && url.port !== (isHttps ? '443' : '80') ? `:${url.port}` : ''}${options.path}`;
+        this.lastDebug = {
+          transport: 'rest',
+          url: fullUrl,
+          requestBody: requestData,
+          errorMessage: e.message
+        };
         reject(new Error(`REST request failed: ${e.message}`));
       });
 
@@ -168,6 +241,10 @@ class MCPClient {
       }
 
       const response = await this.client.listTools();
+      this.lastDebug = {
+        transport: 'stdio',
+        action: 'listTools'
+      };
       return response.tools || [];
     }
   }
@@ -188,7 +265,64 @@ class MCPClient {
         arguments: args || {}
       });
 
+      this.lastDebug = {
+        transport: 'stdio',
+        action: 'callTool',
+        requestBody: { name, arguments: args || {} },
+        responseBody: response
+      };
       return response;
+    }
+  }
+
+  async callMethod(method, params = {}) {
+    if (this.config.transport === 'rest') {
+      return await this.restRequest(method, params);
+    } else {
+      if (!this.client) {
+        throw new Error('Not connected to MCP server');
+      }
+
+      // For stdio, handle known methods or try generic request
+      // The MCP SDK Client may have a request method for arbitrary calls
+      try {
+        // Try using request method if available
+        if (typeof this.client.request === 'function') {
+          const response = await this.client.request({
+            method: method,
+            params: params
+          });
+
+          this.lastDebug = {
+            transport: 'stdio',
+            action: method,
+            requestBody: params,
+            responseBody: response
+          };
+          return response;
+        }
+        
+        // Fallback: handle specific known methods
+        if (method === 'tools/list') {
+          const tools = await this.listTools();
+          return { tools: tools };
+        } else if (method === 'tools/call') {
+          if (!params.name) {
+            throw new Error('Tool name is required for tools/call');
+          }
+          return await this.callTool(params.name, params.arguments || {});
+        } else {
+          throw new Error(`Method "${method}" is not directly supported for stdio transport. Use REST transport for arbitrary method calls, or use the specific SDK methods (listTools, callTool).`);
+        }
+      } catch (error) {
+        this.lastDebug = {
+          transport: 'stdio',
+          action: method,
+          requestBody: params,
+          errorMessage: error.message
+        };
+        throw error;
+      }
     }
   }
 
@@ -206,6 +340,10 @@ class MCPClient {
         this.transport = null;
       }
     }
+  }
+
+  getLastDebug() {
+    return this.lastDebug;
   }
 }
 

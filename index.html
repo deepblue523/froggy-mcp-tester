@@ -10,11 +10,12 @@
   <div class="container">
     <header>
       <h1>MCP Server Tester</h1>
+      <button id="help-btn" class="btn btn-secondary help-btn" title="Help">Help</button>
     </header>
 
     <div class="main-content">
       <!-- Server List Panel -->
-      <div class="panel server-panel">
+      <div class="panel server-panel" id="server-panel">
         <div class="panel-header">
           <h2>MCP Servers</h2>
           <button id="add-server-btn" class="btn btn-primary">+ Add Server</button>
@@ -24,14 +25,18 @@
         </div>
       </div>
 
+      <!-- Resize Handle -->
+      <div class="resize-handle" id="resize-handle"></div>
+
       <!-- Tools Panel -->
       <div class="panel tools-panel">
         <div class="panel-header">
-          <h2 id="tools-panel-title">Select a server to view tools</h2>
+          <h2 id="tools-panel-title">Select a server to view endpoints</h2>
+          <button id="tools-refresh-btn" class="btn btn-secondary" title="Refresh endpoints">Refresh</button>
         </div>
         <div id="tools-content">
           <div class="empty-state">
-            <p>Select an MCP server from the list to view and test its tools.</p>
+            <p>Select an MCP server from the list to view and test its endpoints.</p>
           </div>
         </div>
       </div>
@@ -77,6 +82,35 @@
           <button type="submit" class="btn btn-primary">Save</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Send Request Modal -->
+  <div id="request-modal" class="modal">
+    <div class="modal-content request-modal-content">
+      <div class="modal-header">
+        <h2>Send Request</h2>
+        <button class="modal-close" id="request-modal-close">&times;</button>
+      </div>
+      <div class="request-modal-body">
+        <div class="form-group">
+          <label>Endpoint:</label>
+          <div class="endpoint-info">
+            <strong id="request-endpoint-name"></strong>
+            <p id="request-endpoint-url" class="endpoint-url"></p>
+            <p id="request-endpoint-desc" class="endpoint-desc"></p>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="request-payload">Payload (JSON):</label>
+          <textarea id="request-payload" class="payload-textarea" placeholder='{"key": "value"}'></textarea>
+        </div>
+        <div id="request-response"></div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" id="request-modal-cancel">Cancel</button>
+          <button type="button" class="btn btn-primary" id="request-send">Send</button>
+        </div>
+      </div>
     </div>
   </div>
 
