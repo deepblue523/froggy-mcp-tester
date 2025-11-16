@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MCP Server Tester</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>MCP Server Tester</h1>
+    </header>
+
+    <div class="main-content">
+      <!-- Server List Panel -->
+      <div class="panel server-panel">
+        <div class="panel-header">
+          <h2>MCP Servers</h2>
+          <button id="add-server-btn" class="btn btn-primary">+ Add Server</button>
+        </div>
+        <div class="server-list" id="server-list">
+          <!-- Servers will be dynamically added here -->
+        </div>
+      </div>
+
+      <!-- Tools Panel -->
+      <div class="panel tools-panel">
+        <div class="panel-header">
+          <h2 id="tools-panel-title">Select a server to view tools</h2>
+        </div>
+        <div id="tools-content">
+          <div class="empty-state">
+            <p>Select an MCP server from the list to view and test its tools.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add/Edit Server Modal -->
+  <div id="server-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-title">Add MCP Server</h2>
+        <button class="modal-close" id="modal-close">&times;</button>
+      </div>
+      <form id="server-form">
+        <div class="form-group">
+          <label for="server-name">Server Name:</label>
+          <input type="text" id="server-name" required placeholder="My MCP Server">
+        </div>
+        <div class="form-group">
+          <label for="server-transport">Transport Type:</label>
+          <select id="server-transport" required>
+            <option value="stdio">Stdio (Command)</option>
+            <option value="rest">REST (HTTP/HTTPS)</option>
+          </select>
+        </div>
+        <div class="form-group" id="stdio-address-group">
+          <label for="server-address">Server Address (stdio command):</label>
+          <input type="text" id="server-address" placeholder="node server.js">
+          <small>Enter the command to run the server (e.g., "node server.js" or "python mcp_server.py")</small>
+        </div>
+        <div class="form-group" id="rest-address-group" style="display: none;">
+          <label for="server-rest-url">REST URL:</label>
+          <input type="url" id="server-rest-url" placeholder="https://api.example.com/mcp">
+          <small>Enter the base URL for the MCP REST API</small>
+        </div>
+        <div class="form-group" id="rest-api-key-group" style="display: none;">
+          <label for="server-api-key">API Key (optional):</label>
+          <input type="text" id="server-api-key" placeholder="your-api-key">
+          <small>Optional API key for authentication</small>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" id="modal-cancel">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
+
