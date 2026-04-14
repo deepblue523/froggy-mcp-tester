@@ -4,13 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MCP Server Tester</title>
+  <link rel="icon" href="images/cloud-server-check_32x32.png" type="image/png">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <div id="update-banner" class="update-banner" hidden role="status" aria-live="polite"></div>
   <div class="container">
     <header>
       <h1>MCP Server Tester</h1>
-      <button id="help-btn" class="btn btn-secondary help-btn" title="Help">Help</button>
+      <div class="header-actions">
+        <button id="check-updates-btn" class="btn btn-secondary" type="button" title="Check GitHub for a newer version">Check for Updates</button>
+        <button id="help-btn" class="btn btn-secondary" type="button" title="Help">Help</button>
+      </div>
     </header>
 
     <div class="main-content">

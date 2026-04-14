@@ -35,7 +35,100 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupEventListeners();
   setupResizeHandle();
   loadPanelWidth();
+  setupUpdateBanner();
 });
+
+function setupUpdateBanner() {
+  const api = window.electronAPI;
+  if (!api || typeof api.onUpdateChannel !== 'function') {
+    return;
+  }
+
+  const banner = document.getElementById('update-banner');
+  if (!banner) {
+    return;
+  }
+
+  api.onUpdateChannel((msg) => {
+    if (!msg || !msg.phase) {
+      return;
+    }
+
+    if (msg.phase === 'none' || msg.phase === 'checking') {
+      if (msg.phase === 'checking') {
+        return;
+      }
+      if (window.__manualUpdateCheckPending) {
+        window.__manualUpdateCheckPending = false;
+        banner.hidden = false;
+        banner.className = 'update-banner';
+        const upToDate = "You're up to date.";
+        banner.textContent = upToDate;
+        setTimeout(() => {
+          if (banner.textContent === upToDate) {
+            banner.hidden = true;
+          }
+        }, 4500);
+        return;
+      }
+      if (msg.phase === 'none') {
+        banner.hidden = true;
+        banner.textContent = '';
+        banner.className = 'update-banner';
+      }
+      return;
+    }
+
+    if (msg.phase === 'error') {
+      window.__manualUpdateCheckPending = false;
+      banner.hidden = true;
+      banner.textContent = '';
+      banner.className = 'update-banner';
+      return;
+    }
+
+    banner.hidden = false;
+
+    if (msg.phase === 'available') {
+      window.__manualUpdateCheckPending = false;
+      banner.className = 'update-banner update-banner--progress';
+      banner.textContent = `Update ${msg.version} available — downloading…`;
+      return;
+    }
+
+    if (msg.phase === 'progress') {
+      banner.className = 'update-banner update-banner--progress';
+      const pct = typeof msg.percent === 'number' ? msg.percent : 0;
+      banner.textContent = `Downloading update… ${pct}%`;
+      return;
+    }
+
+    if (msg.phase === 'ready') {
+      window.__manualUpdateCheckPending = false;
+      banner.className = 'update-banner';
+      const v = msg.version || '';
+      banner.innerHTML = '';
+      const label = document.createElement('span');
+      label.textContent = `Update ${v} is ready. Restart to finish installing.`;
+      const actions = document.createElement('span');
+      actions.className = 'update-banner-actions';
+      const restart = document.createElement('button');
+      restart.type = 'button';
+      restart.textContent = 'Restart now';
+      restart.addEventListener('click', () => {
+        api.quitAndInstallUpdate();
+      });
+      const later = document.createElement('button');
+      later.type = 'button';
+      later.textContent = 'Later';
+      later.addEventListener('click', () => {
+        banner.hidden = true;
+      });
+      actions.append(restart, later);
+      banner.append(label, actions);
+    }
+  });
+}
 
 function setupEventListeners() {
   // Add server button
@@ -66,6 +159,42 @@ function setupEventListeners() {
       loadTools();
     }
   });
+
+  const checkUpdatesBtn = document.getElementById('check-updates-btn');
+  if (checkUpdatesBtn && window.electronAPI?.checkForUpdatesNow) {
+    checkUpdatesBtn.addEventListener('click', async () => {
+      const api = window.electronAPI;
+      const banner = document.getElementById('update-banner');
+      checkUpdatesBtn.disabled = true;
+      try {
+        const result = await api.checkForUpdatesNow();
+        if (result?.skipped) {
+          if (banner) {
+            banner.hidden = false;
+            banner.className = 'update-banner update-banner--info';
+            banner.textContent =
+              'Updates from GitHub are applied in the installed app. Dev mode does not download release updates.';
+            setTimeout(() => {
+              if (banner.textContent.startsWith('Updates from GitHub')) {
+                banner.hidden = true;
+              }
+            }, 6500);
+          }
+          return;
+        }
+        window.__manualUpdateCheckPending = true;
+        if (banner) {
+          banner.hidden = false;
+          banner.className = 'update-banner update-banner--progress';
+          banner.textContent = 'Checking for updates…';
+        }
+      } finally {
+        setTimeout(() => {
+          checkUpdatesBtn.disabled = false;
+        }, 1200);
+      }
+    });
+  }
 
   // Help button
   const helpBtn = document.getElementById('help-btn');

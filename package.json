@@ -3,18 +3,62 @@
   "version": "1.0.0",
   "description": "Electron app to test MCP servers",
   "main": "main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/deepblue523/froggy-mcp-tester.git"
+  },
   "scripts": {
     "start": "electron .",
-    "dev": "electron . --dev"
+    "dev": "electron . --dev",
+    "release:build": "electron-builder --win --x64 --publish never"
   },
   "keywords": ["electron", "mcp", "testing"],
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^28.0.0"
+    "electron": "^28.0.0",
+    "electron-builder": "^24.13.3"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^0.5.0"
+    "@modelcontextprotocol/sdk": "^0.5.0",
+    "electron-updater": "^6.1.7"
+  },
+  "build": {
+    "appId": "com.froggy.mcp-tester",
+    "productName": "Froggy MCP Tester",
+    "icon": "images/cloud-server-check_256.png",
+    "publish": {
+      "provider": "github",
+      "owner": "deepblue523",
+      "repo": "froggy-mcp-tester"
+    },
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "github-updater.js",
+      "preload.js",
+      "renderer.js",
+      "mcp-client.js",
+      "index.html",
+      "help-viewer.html",
+      "styles.css",
+      "package.json",
+      "images/**"
+    ],
+    "win": {
+      "artifactName": "${name}-setup-${version}.${ext}",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }
-

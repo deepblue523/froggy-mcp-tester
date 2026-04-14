@@ -1,8 +1,10 @@
 const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
 const fs = require('fs').promises;
+const { setupGitHubAutoUpdater } = require('./github-updater');
 
 let mainWindow;
+const appIconPath = path.join(__dirname, 'images', 'cloud-server-check_32x32.png');
 const serversFile = path.join(app.getPath('userData'), 'mcp-servers.json');
 const windowBoundsFile = path.join(app.getPath('userData'), 'window-bounds.json');
 
@@ -58,6 +60,7 @@ async function createWindow() {
     height: bounds.height,
     x: bounds.x,
     y: bounds.y,
+    icon: appIconPath,
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
@@ -86,6 +89,7 @@ async function createWindow() {
 
 app.whenReady().then(async () => {
   await createWindow();
+  setupGitHubAutoUpdater(() => mainWindow);
 
   app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -179,6 +183,7 @@ ipcMain.handle('open-help', async () => {
     height: 700,
     parent: mainWindow,
     modal: false,
+    icon: appIconPath,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
