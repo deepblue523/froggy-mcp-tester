@@ -1,6 +1,6 @@
 {
   "name": "froggy-mcp-tester",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Electron app to test MCP servers",
   "main": "main.js",
   "repository": {
@@ -12,7 +12,11 @@
     "dev": "electron . --dev",
     "release:build": "electron-builder --win --x64 --publish never"
   },
-  "keywords": ["electron", "mcp", "testing"],
+  "keywords": [
+    "electron",
+    "mcp",
+    "testing"
+  ],
   "author": "",
   "license": "MIT",
   "devDependencies": {
@@ -52,7 +56,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
