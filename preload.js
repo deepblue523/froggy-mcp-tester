@@ -9,7 +9,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listTools: (serverConfig) => ipcRenderer.invoke('mcp-list-tools', serverConfig),
   callTool: (serverConfig, toolName, args) => ipcRenderer.invoke('mcp-call-tool', serverConfig, toolName, args),
   callMethod: (serverConfig, method, params) => ipcRenderer.invoke('mcp-call-method', serverConfig, method, params),
-  
+  detectMcpEndpoint: (serverConfig) => ipcRenderer.invoke('mcp-detect-endpoint', serverConfig),
+  sendRawJsonRpc: (serverConfig, bodyObject) => ipcRenderer.invoke('mcp-jsonrpc-raw', serverConfig, bodyObject),
+
   // Help operations
   openHelp: () => ipcRenderer.invoke('open-help'),
   readUsageMd: () => ipcRenderer.invoke('read-usage-md'),

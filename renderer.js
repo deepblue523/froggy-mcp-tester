@@ -2,29 +2,45 @@ let servers = [];
 let currentServer = null;
 let currentTools = [];
 let currentEndpoints = [];
+/** @type {string|null} */
+let pendingDetectedMcpUrl = null;
 
-// Standard MCP endpoints
+const HISTORY_KEY = 'mcpRpcHistory';
+const HISTORY_LIMIT = 40;
+
+// JSON-RPC method templates (MCP over HTTP uses one POST URL; method goes in the body)
 const STANDARD_ENDPOINTS = [
   {
-    name: 'tools/list',
-    description: 'List all available tools from the server',
-    samplePayload: {}
-  },
-  {
     name: 'initialize',
-    description: 'Initialize the MCP connection',
+    description: 'MCP initialize (JSON-RPC method in POST body)',
     samplePayload: {
-      protocolVersion: '2024-11-05',
+      protocolVersion: '2025-06-18',
       capabilities: {},
       clientInfo: {
-        name: 'froggy-mcp-tester',
+        name: 'mcp-test-electron',
         version: '1.0.0'
       }
     }
   },
   {
-    name: 'ping',
-    description: 'Ping the server to check connectivity',
+    name: 'notifications/initialized',
+    description: 'MCP initialized notification (sent without JSON-RPC id)',
+    samplePayload: {},
+    isNotification: true
+  },
+  {
+    name: 'tools/list',
+    description: 'List tools (requires successful initialize flow for most servers)',
+    samplePayload: {}
+  },
+  {
+    name: 'resources/list',
+    description: 'List resources (optional)',
+    samplePayload: {}
+  },
+  {
+    name: 'prompts/list',
+    description: 'List prompts (optional)',
     samplePayload: {}
   }
 ];
@@ -36,6 +52,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupResizeHandle();
   loadPanelWidth();
   setupUpdateBanner();
+  updateMcpWorkflowVisibility();
+  renderRequestHistoryList();
 });
 
 function setupUpdateBanner() {
@@ -213,6 +231,19 @@ function setupEventListeners() {
       hideRequestModal();
     }
   });
+
+  const detectBtn = document.getElementById('detect-mcp-btn');
+  if (detectBtn) {
+    detectBtn.addEventListener('click', onDetectMcpEndpoint);
+  }
+  const saveDetectedBtn = document.getElementById('save-detected-endpoint-btn');
+  if (saveDetectedBtn) {
+    saveDetectedBtn.addEventListener('click', onSaveDetectedMcpEndpoint);
+  }
+  const rawSendBtn = document.getElementById('raw-jsonrpc-send');
+  if (rawSendBtn) {
+    rawSendBtn.addEventListener('click', onSendRawJsonRpc);
+  }
 }
 
 function updateTransportFields() {
@@ -222,18 +253,24 @@ function updateTransportFields() {
   const stdioGroup = document.getElementById('stdio-address-group');
   const restGroup = document.getElementById('rest-address-group');
   const apiKeyGroup = document.getElementById('rest-api-key-group');
-  
+  const mcpUrlGroup = document.getElementById('rest-mcp-url-group');
+  const legacyGroup = document.getElementById('rest-legacy-group');
+
   const transport = transportSelect.value;
   if (transport === 'rest') {
     stdioGroup.style.display = 'none';
     restGroup.style.display = 'block';
     apiKeyGroup.style.display = 'block';
+    if (mcpUrlGroup) mcpUrlGroup.style.display = 'block';
+    if (legacyGroup) legacyGroup.style.display = 'block';
     addressInput.removeAttribute('required');
     restUrlInput.setAttribute('required', 'required');
   } else {
     stdioGroup.style.display = 'block';
     restGroup.style.display = 'none';
     apiKeyGroup.style.display = 'none';
+    if (mcpUrlGroup) mcpUrlGroup.style.display = 'none';
+    if (legacyGroup) legacyGroup.style.display = 'none';
     restUrlInput.removeAttribute('required');
     addressInput.setAttribute('required', 'required');
   }
@@ -246,6 +283,249 @@ async function loadServers() {
 
 async function saveServers() {
   await window.electronAPI.saveServers(servers);
+}
+
+/**
+ * @param {object|null} override Optional server-like object (defaults to currentServer)
+ */
+function buildServerConfigForIpc(override = null) {
+  const server = override || currentServer;
+  if (!server) {
+    return null;
+  }
+  const cfg = {
+    name: server.name,
+    address: server.address,
+    transport: server.transport || 'stdio',
+    apiKey: server.apiKey || null
+  };
+  if (cfg.transport === 'rest') {
+    const mcp = (server.mcpHttpUrl || '').trim();
+    if (mcp) {
+      cfg.mcpHttpUrl = mcp;
+    }
+    if (server.restLegacyPathPerMethod) {
+      cfg.restLegacyPathPerMethod = true;
+    }
+  }
+  return cfg;
+}
+
+async function persistResolvedMcpUrlIfNeeded(response) {
+  if (!response || !response.success || !currentServer) {
+    return;
+  }
+  const url = response.debug && response.debug.mcpHttpUrl;
+  if (!url || currentServer.transport !== 'rest' || currentServer.restLegacyPathPerMethod) {
+    updateMcpWorkflowVisibility();
+    return;
+  }
+  const idx = currentServer.index;
+  const existing = (servers[idx] && servers[idx].mcpHttpUrl || '').trim();
+  if (!existing) {
+    servers[idx].mcpHttpUrl = url;
+    currentServer = { index: idx, ...servers[idx] };
+    await saveServers();
+    await loadServers();
+    currentServer = { index: idx, ...servers[idx] };
+    renderServerList();
+  }
+  updateMcpWorkflowVisibility();
+}
+
+function updateMcpWorkflowVisibility() {
+  const el = document.getElementById('mcp-workflow');
+  if (!el) {
+    return;
+  }
+  const summary = document.getElementById('mcp-endpoint-summary');
+  const saveBtn = document.getElementById('save-detected-endpoint-btn');
+  const isRestMcp =
+    currentServer &&
+    currentServer.transport === 'rest' &&
+    !currentServer.restLegacyPathPerMethod;
+
+  if (!isRestMcp) {
+    el.hidden = true;
+    return;
+  }
+
+  el.hidden = false;
+  const manual = (currentServer.mcpHttpUrl || '').trim();
+  const source = manual ? 'User-provided MCP URL' : 'Auto-detected on connect (saved to server when base had no override)';
+  const effective = manual || pendingDetectedMcpUrl || '(resolved on first request)';
+  if (summary) {
+    summary.textContent = `MCP POST: ${effective} · ${source}`;
+  }
+  if (saveBtn) {
+    saveBtn.hidden = !(pendingDetectedMcpUrl && !manual);
+  }
+  renderRequestHistoryList();
+}
+
+function renderDiagnosticsPanel(debug) {
+  const panel = document.getElementById('diagnostics-panel');
+  if (!panel) {
+    return;
+  }
+  if (!debug) {
+    panel.innerHTML = '<p class="muted">No diagnostics yet. Run detection, refresh tools, or send a request.</p>';
+    return;
+  }
+
+  const flags = debug.flags || {};
+  const flagRow = `
+    <div class="diagnostics-flags">
+      <span class="diagnostics-flag ${flags.httpReachable ? 'ok' : 'bad'}">HTTP ${flags.httpReachable ? 'reachable' : 'not verified'}</span>
+      <span class="diagnostics-flag ${flags.jsonParseSucceeded ? 'ok' : 'bad'}">JSON parse ${flags.jsonParseSucceeded ? 'ok' : 'fail'}</span>
+      <span class="diagnostics-flag ${flags.jsonRpcValid ? 'ok' : 'bad'}">JSON-RPC ${flags.jsonRpcValid ? 'valid' : 'invalid'}</span>
+      <span class="diagnostics-flag ${flags.mcpInitializeSucceeded ? 'ok' : 'bad'}">MCP initialize ${flags.mcpInitializeSucceeded ? 'ok' : 'n/a'}</span>
+    </div>
+  `;
+
+  const steps = Array.isArray(debug.steps) ? debug.steps : [];
+  let stepsHtml = '';
+  steps.forEach((s, i) => {
+    const title = s.phase || s.method || `step-${i + 1}`;
+    const req = s.requestBody ? escapeHtml(JSON.stringify(s.requestBody, null, 2)) : '';
+    const res = s.responseBody != null
+      ? escapeHtml(JSON.stringify(s.responseBody, null, 2))
+      : escapeHtml((s.responseRawPreview || s.rawTextPreview || '').substring(0, 1500));
+    stepsHtml += `
+      <div class="diagnostics-step">
+        <strong>${escapeHtml(title)}</strong>
+        ${s.url ? `<div>URL: ${escapeHtml(s.url)}</div>` : ''}
+        ${typeof s.statusCode === 'number' ? `<div>HTTP status: ${s.statusCode}</div>` : ''}
+        ${s.errorMessage ? `<div>Error: ${escapeHtml(s.errorMessage)}</div>` : ''}
+        ${req ? `<div><em>Request</em><pre>${req}</pre></div>` : ''}
+        ${res ? `<div><em>Response</em><pre>${res}</pre></div>` : ''}
+      </div>
+    `;
+  });
+
+  panel.innerHTML = `
+    <h4>Diagnostics</h4>
+    <div>Mode: ${escapeHtml(debug.mode || debug.transport || '')}</div>
+    ${debug.mcpHttpUrl ? `<div>MCP URL: ${escapeHtml(debug.mcpHttpUrl)}</div>` : ''}
+    ${flagRow}
+    ${stepsHtml || '<p>No step details recorded.</p>'}
+  `;
+}
+
+function loadRequestHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) {
+      return [];
+    }
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRequestHistory(items) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(items.slice(0, HISTORY_LIMIT)));
+  } catch (e) {
+    console.error('Failed to save request history', e);
+  }
+}
+
+function appendRequestHistory(entry) {
+  const items = loadRequestHistory();
+  items.unshift({ t: new Date().toISOString(), ...entry });
+  saveRequestHistory(items);
+  renderRequestHistoryList();
+}
+
+function renderRequestHistoryList() {
+  const ul = document.getElementById('request-history-list');
+  if (!ul) {
+    return;
+  }
+  const items = loadRequestHistory();
+  if (items.length === 0) {
+    ul.innerHTML = '<li>No requests yet.</li>';
+    return;
+  }
+  ul.innerHTML = items
+    .map((it) => {
+      const summary =
+        it.kind === 'detect'
+          ? `detect ${it.ok ? 'ok' : 'fail'}${it.url ? ` → ${it.url}` : ''}`
+          : `${it.kind || 'rpc'} ${it.method || ''} ${it.ok ? 'ok' : 'fail'}`;
+      return `<li>${escapeHtml(it.t || '')} — ${escapeHtml(summary)}</li>`;
+    })
+    .join('');
+}
+
+async function onDetectMcpEndpoint() {
+  if (!currentServer || currentServer.transport !== 'rest') {
+    return;
+  }
+  const panel = document.getElementById('diagnostics-panel');
+  if (panel) {
+    panel.textContent = 'Detecting MCP endpoint…';
+  }
+  const cfg = buildServerConfigForIpc({
+    ...currentServer,
+    mcpHttpUrl: null,
+    restLegacyPathPerMethod: false
+  });
+  const result = await window.electronAPI.detectMcpEndpoint(cfg);
+  renderDiagnosticsPanel(result.debug);
+  if (result.success && result.url) {
+    pendingDetectedMcpUrl = result.url;
+    appendRequestHistory({ kind: 'detect', url: result.url, ok: true });
+  } else {
+    pendingDetectedMcpUrl = null;
+    appendRequestHistory({ kind: 'detect', ok: false, error: result.error });
+  }
+  updateMcpWorkflowVisibility();
+}
+
+async function onSaveDetectedMcpEndpoint() {
+  if (!currentServer || !pendingDetectedMcpUrl) {
+    return;
+  }
+  const idx = currentServer.index;
+  servers[idx].mcpHttpUrl = pendingDetectedMcpUrl;
+  pendingDetectedMcpUrl = null;
+  await saveServers();
+  await loadServers();
+  currentServer = { index: idx, ...servers[idx] };
+  renderServerList();
+  updateMcpWorkflowVisibility();
+}
+
+async function onSendRawJsonRpc() {
+  const ta = document.getElementById('raw-jsonrpc-input');
+  const out = document.getElementById('raw-jsonrpc-result');
+  if (!ta || !out || !currentServer) {
+    return;
+  }
+  let body;
+  try {
+    body = JSON.parse(ta.value || '{}');
+  } catch (e) {
+    out.textContent = `Invalid JSON: ${e.message}`;
+    return;
+  }
+  out.textContent = 'Sending…';
+  const response = await window.electronAPI.sendRawJsonRpc(buildServerConfigForIpc(), body);
+  renderDiagnosticsPanel(response.debug);
+  if (response.success) {
+    const payload = response.parsed !== undefined && response.parsed !== null
+      ? response.parsed
+      : response.rawText;
+    out.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+    appendRequestHistory({ kind: 'raw', method: body.method, ok: true });
+  } else {
+    out.textContent = response.error || 'Error';
+    appendRequestHistory({ kind: 'raw', method: body.method, ok: false, error: response.error });
+  }
 }
 
 function renderServerList() {
@@ -287,42 +567,46 @@ function renderServerList() {
 
 function selectServer(index) {
   currentServer = { index, ...servers[index] };
+  pendingDetectedMcpUrl = null;
   renderServerList();
-  showStandardEndpoints();
+  updateMcpWorkflowVisibility();
+  const transport = currentServer.transport || 'stdio';
+  const legacy = Boolean(currentServer.restLegacyPathPerMethod);
+  if (transport === 'rest' && !legacy) {
+    void loadTools();
+  } else {
+    showStandardEndpoints();
+  }
 }
 
 function showStandardEndpoints() {
   const toolsContent = document.getElementById('tools-content');
   const panelTitle = document.getElementById('tools-panel-title');
-  
-  panelTitle.textContent = `Endpoints - ${currentServer.name}`;
-  
-  // Just show standard endpoints without loading tools
+
+  panelTitle.textContent = `MCP · ${currentServer.name}`;
+
   currentEndpoints = [...STANDARD_ENDPOINTS];
   currentTools = [];
   renderEndpoints();
+  updateMcpWorkflowVisibility();
 }
 
 async function loadTools() {
   const toolsContent = document.getElementById('tools-content');
   const panelTitle = document.getElementById('tools-panel-title');
   
-  panelTitle.textContent = `Endpoints - ${currentServer.name}`;
-  toolsContent.innerHTML = '<div class="loading">Loading endpoints...</div>';
+  panelTitle.textContent = `MCP · ${currentServer.name}`;
+  toolsContent.innerHTML = '<div class="loading">Loading tools and JSON-RPC methods…</div>';
 
   try {
     // Pass full server config
-    const serverConfig = {
-      name: currentServer.name,
-      address: currentServer.address,
-      transport: currentServer.transport || 'stdio',
-      apiKey: currentServer.apiKey || null
-    };
-    
-    // Try to load tools to discover available endpoints
+    const serverConfig = buildServerConfigForIpc();
+
     const response = await window.electronAPI.listTools(serverConfig);
-    
+
     if (response.success) {
+      await persistResolvedMcpUrlIfNeeded(response);
+      renderDiagnosticsPanel(response.debug || null);
       currentTools = response.tools || [];
       
       // Build endpoints list: standard endpoints + tool endpoints
@@ -340,10 +624,11 @@ async function loadTools() {
       
       renderEndpoints();
     } else {
+      renderDiagnosticsPanel(response.debug || null);
       // Even if tools fail, show standard endpoints
       currentEndpoints = [...STANDARD_ENDPOINTS];
       renderEndpoints();
-      
+
       // Show error but still allow testing
       const errorPanel = document.createElement('div');
       errorPanel.className = 'tool-result error';
@@ -355,10 +640,11 @@ async function loadTools() {
       toolsContent.prepend(errorPanel);
     }
   } catch (error) {
+    renderDiagnosticsPanel(null);
     // Even on error, show standard endpoints
     currentEndpoints = [...STANDARD_ENDPOINTS];
     renderEndpoints();
-    
+
     const errorPanel = document.createElement('div');
     errorPanel.className = 'tool-result error';
     errorPanel.innerHTML = `
@@ -569,12 +855,7 @@ async function executeTool(tool) {
       });
     }
 
-    const serverConfig = {
-      name: currentServer.name,
-      address: currentServer.address,
-      transport: currentServer.transport || 'stdio',
-      apiKey: currentServer.apiKey || null
-    };
+    const serverConfig = buildServerConfigForIpc();
     const response = await window.electronAPI.callTool(serverConfig, tool.name, args);
 
     if (response.success) {
@@ -606,16 +887,30 @@ async function executeTool(tool) {
 
 function renderRequestDebug(debug) {
   try {
-    // Build a human-friendly block containing URL and payloads
     const lines = [];
     if (debug.transport) {
       lines.push(`Transport: ${debug.transport}`);
+    }
+    if (debug.mode) {
+      lines.push(`Mode: ${debug.mode}`);
+    }
+    if (debug.mcpHttpUrl) {
+      lines.push(`MCP URL: ${debug.mcpHttpUrl}`);
     }
     if (debug.url) {
       lines.push(`URL: ${debug.url}`);
     }
     if (debug.action) {
       lines.push(`Action: ${debug.action}`);
+    }
+    if (debug.flags) {
+      const f = debug.flags;
+      lines.push(
+        `Flags: HTTP ${f.httpReachable ? 'ok' : '?'}` +
+          ` · JSON parse ${f.jsonParseSucceeded ? 'ok' : '?'}` +
+          ` · JSON-RPC ${f.jsonRpcValid ? 'ok' : '?'}` +
+          ` · MCP init ${f.mcpInitializeSucceeded ? 'ok' : 'n/a'}`
+      );
     }
     if (typeof debug.statusCode !== 'undefined') {
       lines.push(`Status: ${debug.statusCode}`);
@@ -627,10 +922,16 @@ function renderRequestDebug(debug) {
       ? JSON.stringify(debug.responseBody, null, 2)
       : (debug.responseBodyPreview ? debug.responseBodyPreview : null);
 
+    let stepsBlock = '';
+    if (Array.isArray(debug.steps) && debug.steps.length) {
+      stepsBlock = `<h5>Steps</h5><pre>${escapeHtml(JSON.stringify(debug.steps, null, 2))}</pre>`;
+    }
+
     return `
       <pre>${escapeHtml(header)}</pre>
       ${request ? `<h5>Payload Sent</h5><pre>${escapeHtml(request)}</pre>` : ''}
       ${response ? `<h5>Payload Received</h5><pre>${escapeHtml(response)}</pre>` : ''}
+      ${stepsBlock}
     `;
   } catch {
     return '<pre>Debug info unavailable</pre>';
@@ -646,6 +947,8 @@ function showServerModal(serverIndex = null) {
   const addressInput = document.getElementById('server-address');
   const restUrlInput = document.getElementById('server-rest-url');
   const apiKeyInput = document.getElementById('server-api-key');
+  const mcpHttpInput = document.getElementById('server-mcp-http-url');
+  const legacyInput = document.getElementById('server-rest-legacy');
 
   if (serverIndex !== null) {
     // Edit mode
@@ -656,8 +959,20 @@ function showServerModal(serverIndex = null) {
     if (server.transport === 'rest') {
       restUrlInput.value = server.address;
       apiKeyInput.value = server.apiKey || '';
+      if (mcpHttpInput) {
+        mcpHttpInput.value = server.mcpHttpUrl || '';
+      }
+      if (legacyInput) {
+        legacyInput.checked = Boolean(server.restLegacyPathPerMethod);
+      }
     } else {
       addressInput.value = server.address;
+      if (mcpHttpInput) {
+        mcpHttpInput.value = '';
+      }
+      if (legacyInput) {
+        legacyInput.checked = false;
+      }
     }
     updateTransportFields();
     form.dataset.editIndex = serverIndex;
@@ -666,6 +981,12 @@ function showServerModal(serverIndex = null) {
     title.textContent = 'Add MCP Server';
     form.reset();
     transportSelect.value = 'stdio';
+    if (mcpHttpInput) {
+      mcpHttpInput.value = '';
+    }
+    if (legacyInput) {
+      legacyInput.checked = false;
+    }
     updateTransportFields();
     delete form.dataset.editIndex;
   }
@@ -687,9 +1008,13 @@ async function handleServerSubmit(e) {
   const address = transport === 'rest' 
     ? document.getElementById('server-rest-url').value.trim()
     : document.getElementById('server-address').value.trim();
-  const apiKey = transport === 'rest' 
+  const apiKey = transport === 'rest'
     ? document.getElementById('server-api-key').value.trim() || null
     : null;
+  const mcpHttpEl = document.getElementById('server-mcp-http-url');
+  const legacyEl = document.getElementById('server-rest-legacy');
+  const mcpHttpUrl = transport === 'rest' && mcpHttpEl ? mcpHttpEl.value.trim() : '';
+  const restLegacy = transport === 'rest' && legacyEl ? legacyEl.checked : false;
 
   if (!name || !address) {
     return;
@@ -700,9 +1025,24 @@ async function handleServerSubmit(e) {
     transport,
     address
   };
-  
+
   if (apiKey) {
     serverData.apiKey = apiKey;
+  }
+  if (transport === 'rest') {
+    if (mcpHttpUrl) {
+      serverData.mcpHttpUrl = mcpHttpUrl;
+    } else {
+      delete serverData.mcpHttpUrl;
+    }
+    if (restLegacy) {
+      serverData.restLegacyPathPerMethod = true;
+    } else {
+      delete serverData.restLegacyPathPerMethod;
+    }
+  } else {
+    delete serverData.mcpHttpUrl;
+    delete serverData.restLegacyPathPerMethod;
   }
 
   const editIndex = form.dataset.editIndex;
@@ -731,12 +1071,14 @@ async function deleteServer(index) {
     
     if (currentServer && currentServer.index === index) {
       currentServer = null;
+      pendingDetectedMcpUrl = null;
       document.getElementById('tools-panel-title').textContent = 'Select a server to view endpoints';
       document.getElementById('tools-content').innerHTML = `
         <div class="empty-state">
           <p>Select an MCP server from the list to view and test its endpoints.</p>
         </div>
       `;
+      updateMcpWorkflowVisibility();
     }
   }
 }
@@ -793,18 +1135,17 @@ function testEndpoint(endpointIndex) {
 
 function getFullEndpointUrl(serverConfig, endpointName) {
   if (serverConfig.transport === 'rest') {
-    // For REST, construct the full URL
-    // MCP REST typically uses the base URL, but we'll show it as baseUrl/endpoint for clarity
-    const baseUrl = serverConfig.address.trim();
-    // Remove trailing slash if present
-    const cleanBase = baseUrl.replace(/\/$/, '');
-    // Construct full URL - for MCP REST, the method goes in the JSON-RPC body,
-    // but we'll display it as if it were a path for clarity
-    return `${cleanBase}/${endpointName}`;
-  } else {
-    // For stdio, show the command and method
-    return `stdio://${serverConfig.address} [${endpointName}]`;
+    const cleanBase = serverConfig.address.trim().replace(/\/$/, '');
+    if (serverConfig.restLegacyPathPerMethod) {
+      return `${cleanBase}/${endpointName}`;
+    }
+    const mcp = (serverConfig.mcpHttpUrl || '').trim();
+    if (mcp) {
+      return `${mcp} (POST · JSON-RPC method: ${endpointName})`;
+    }
+    return `${cleanBase} → single MCP POST URL (auto /mcp, /api/mcp, /rpc, /) · method: ${endpointName}`;
   }
+  return `stdio://${serverConfig.address} [${endpointName}]`;
 }
 
 function showRequestModal(endpoint, payload) {
@@ -820,7 +1161,13 @@ function showRequestModal(endpoint, payload) {
   
   const displayName = endpoint.toolName ? `${endpoint.name} (${endpoint.toolName})` : endpoint.name;
   endpointNameEl.textContent = displayName;
-  endpointDescEl.textContent = getFullEndpointUrl(currentServer, endpoint.name);
+  const cfg = buildServerConfigForIpc();
+  if (cfg && cfg.transport === 'rest' && !cfg.restLegacyPathPerMethod) {
+    const manual = (currentServer.mcpHttpUrl || '').trim();
+    endpointUrlEl.textContent = manual || `${currentServer.address.replace(/\/$/, '')} (MCP POST URL auto-resolved)`;
+  } else {
+    endpointUrlEl.textContent = getFullEndpointUrl(currentServer, endpoint.name);
+  }
   endpointDescEl.textContent = endpoint.description || 'No description';
   
   // Format payload as JSON
@@ -876,13 +1223,8 @@ async function sendRequest() {
   responseContainer.innerHTML = '<div class="loading">Sending request...</div>';
   
   try {
-    const serverConfig = {
-      name: currentServer.name,
-      address: currentServer.address,
-      transport: currentServer.transport || 'stdio',
-      apiKey: currentServer.apiKey || null
-    };
-    
+    const serverConfig = buildServerConfigForIpc();
+
     // Handle tools/call specially if it has a toolName
     let method = endpoint.name;
     let methodParams = params;
@@ -900,8 +1242,12 @@ async function sendRequest() {
     }
     
     const response = await window.electronAPI.callMethod(serverConfig, method, methodParams);
-    
+
+    renderDiagnosticsPanel(response.debug || null);
+
     if (response.success) {
+      await persistResolvedMcpUrlIfNeeded(response);
+      appendRequestHistory({ kind: 'method', method: endpoint.name, ok: true });
       // If testing tools/list endpoint and it succeeds, load tools to discover endpoints
       if (endpoint.name === 'tools/list') {
         // Extract tools from the response
@@ -938,6 +1284,7 @@ async function sendRequest() {
       }
       responseContainer.innerHTML = html;
     } else {
+      appendRequestHistory({ kind: 'method', method: endpoint.name, ok: false, error: response.error });
       let html = `
         <div class="tool-result error">
           <h4>Error</h4>
@@ -950,6 +1297,7 @@ async function sendRequest() {
       responseContainer.innerHTML = html;
     }
   } catch (error) {
+    appendRequestHistory({ kind: 'method', method: endpoint.name, ok: false, error: error.message });
     responseContainer.innerHTML = `
       <div class="tool-result error">
         <h4>Error</h4>

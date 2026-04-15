@@ -39,6 +39,27 @@
           <h2 id="tools-panel-title">Select a server to view endpoints</h2>
           <button id="tools-refresh-btn" class="btn btn-secondary" title="Refresh endpoints">Refresh</button>
         </div>
+        <div id="mcp-workflow" class="mcp-workflow" hidden>
+          <div class="mcp-workflow-row">
+            <button type="button" id="detect-mcp-btn" class="btn btn-secondary">Try standard MCP endpoints</button>
+            <button type="button" id="save-detected-endpoint-btn" class="btn btn-secondary" hidden>Save detected endpoint</button>
+          </div>
+          <p id="mcp-endpoint-summary" class="mcp-endpoint-summary"></p>
+          <div id="diagnostics-panel" class="diagnostics-panel" aria-live="polite"></div>
+          <details class="raw-jsonrpc-details">
+            <summary>Raw JSON-RPC</summary>
+            <label for="raw-jsonrpc-input" class="sr-only">Raw JSON-RPC body</label>
+            <textarea id="raw-jsonrpc-input" class="raw-jsonrpc-input" rows="8" placeholder='{"jsonrpc":"2.0","id":10,"method":"tools/list","params":{}}'></textarea>
+            <div class="raw-jsonrpc-actions">
+              <button type="button" id="raw-jsonrpc-send" class="btn btn-primary">POST to MCP URL</button>
+            </div>
+            <pre id="raw-jsonrpc-result" class="raw-jsonrpc-result"></pre>
+          </details>
+          <details class="request-history-details">
+            <summary>Request history</summary>
+            <ul id="request-history-list" class="request-history-list"></ul>
+          </details>
+        </div>
         <div id="tools-content">
           <div class="empty-state">
             <p>Select an MCP server from the list to view and test its endpoints.</p>
@@ -73,9 +94,21 @@
           <small>Enter the command to run the server (e.g., "node server.js" or "python mcp_server.py")</small>
         </div>
         <div class="form-group" id="rest-address-group" style="display: none;">
-          <label for="server-rest-url">REST URL:</label>
-          <input type="url" id="server-rest-url" placeholder="https://api.example.com/mcp">
-          <small>Enter the base URL for the MCP REST API</small>
+          <label for="server-rest-url">Base URL:</label>
+          <input type="url" id="server-rest-url" placeholder="https://api.example.com">
+          <small>Base URL of the server; standard MCP paths such as /mcp are tried automatically.</small>
+        </div>
+        <div class="form-group" id="rest-mcp-url-group" style="display: none;">
+          <label for="server-mcp-http-url">MCP HTTP endpoint (optional override):</label>
+          <input type="url" id="server-mcp-http-url" placeholder="https://api.example.com/mcp">
+          <small>Full URL for JSON-RPC POST. Leave blank to auto-detect (/mcp, /api/mcp, /rpc, /).</small>
+        </div>
+        <div class="form-group" id="rest-legacy-group" style="display: none;">
+          <label class="checkbox-label">
+            <input type="checkbox" id="server-rest-legacy">
+            Legacy REST: append method name to the path (old behavior)
+          </label>
+          <small>Use only for non-standard servers. Standard MCP uses a single POST endpoint.</small>
         </div>
         <div class="form-group" id="rest-api-key-group" style="display: none;">
           <label for="server-api-key">API Key (optional):</label>

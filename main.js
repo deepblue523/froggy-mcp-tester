@@ -70,7 +70,10 @@ async function createWindow() {
   });
 
   mainWindow.loadFile('index.html');
-  
+
+  const version = app.isPackaged ? `v${app.getVersion()}` : '(Dev)';
+  mainWindow.setTitle(`Froggy MCP Tester ${version}`);
+
   // Save bounds when window is resized or moved
   let saveBoundsTimeout;
   const debouncedSaveBounds = () => {
@@ -156,6 +159,60 @@ ipcMain.handle('mcp-call-method', async (event, serverConfig, method, params) =>
     return { success: true, result, debug: client.getLastDebug?.() };
   } catch (error) {
     return { success: false, error: error.message, debug: client.getLastDebug?.() };
+  }
+});
+
+ipcMain.handle('mcp-detect-endpoint', async (event, serverConfig) => {
+  const { MCPClient } = require('./mcp-client.js');
+  if (!serverConfig || serverConfig.transport !== 'rest') {
+    return { success: false, error: 'Endpoint detection applies to REST transport only.' };
+  }
+  if (serverConfig.restLegacyPathPerMethod) {
+    return { success: false, error: 'Turn off legacy path-per-method REST to try standard MCP endpoints.' };
+  }
+  const cfg = { ...serverConfig, mcpHttpUrl: null, restLegacyPathPerMethod: false };
+  let client = null;
+  try {
+    client = new MCPClient(cfg);
+    await client.connect();
+    const url = client.getMcpHttpPostUrl();
+    const debug = client.getLastDebug?.();
+    return { success: true, url, debug };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
+      debug: (client && client.getLastDebug && client.getLastDebug()) || { steps: error.detectionSteps || [] }
+    };
+  } finally {
+    try {
+      if (client) {
+        await client.disconnect();
+      }
+    } catch {
+      // ignore
+    }
+  }
+});
+
+ipcMain.handle('mcp-jsonrpc-raw', async (event, serverConfig, bodyObject) => {
+  const { MCPClient } = require('./mcp-client.js');
+  let client = null;
+  try {
+    client = new MCPClient(serverConfig);
+    await client.connect();
+    const out = await client.restMcpPostUserBody(bodyObject);
+    return { success: true, ...out, debug: client.getLastDebug?.() };
+  } catch (error) {
+    return { success: false, error: error.message, debug: client && client.getLastDebug && client.getLastDebug() };
+  } finally {
+    try {
+      if (client) {
+        await client.disconnect();
+      }
+    } catch {
+      // ignore
+    }
   }
 });
 
